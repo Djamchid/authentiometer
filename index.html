@@ -3,7 +3,7 @@
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width,initial-scale=1" />
-  <title>Authentiometer MVP</title>
+  <title>Authentiometer</title>
   <style>
     body { font-family: system-ui, -apple-system, Segoe UI, Roboto, Arial, sans-serif; margin: 24px; max-width: 980px; }
     h1 { margin: 0 0 8px; }
@@ -21,19 +21,22 @@
     button { padding: 10px 14px; border: 0; border-radius: 8px; cursor: pointer; font-weight: 700; }
     button.primary { background: #111; color: #fff; }
     button.secondary { background: #eee; }
+    button:disabled { opacity: 0.5; cursor: not-allowed; }
     .pill { display: inline-block; padding: 3px 8px; border: 1px solid #ddd; border-radius: 999px; font-size: 0.85rem; }
     .hidden { display: none; }
     pre { background: #0b1020; color: #e7e7e7; padding: 12px; border-radius: 10px; overflow: auto; }
     .error { color: #b00020; font-weight: 700; }
     .ok { color: #0a7a2f; font-weight: 700; }
     details summary { cursor: pointer; font-weight: 700; }
+    hr { border: 0; border-top: 1px solid #eee; margin: 12px 0; }
   </style>
 </head>
 <body>
-  <h1>Authentiometer — MVP</h1>
+  <h1>Authentiometer</h1>
   <p class="muted">
-    Par défaut : <span class="pill">Gemini + URL YouTube</span> • Option : <span class="pill">Groq + texte</span><br/>
-    Les clés API restent dans ton navigateur.
+    Par défaut : <span class="pill">Gemini + YouTube</span> (extraction/transcript auto via “video file part”) • Option :
+    <span class="pill">Groq + texte</span><br/>
+    Aucune donnée n’est stockée côté serveur. Les clés peuvent être mémorisées localement si tu coches “Mémoriser”.
   </p>
 
   <div class="card">
@@ -51,7 +54,7 @@
         <div class="inline">
           <div style="flex:1">
             <label for="apiKey">Clé API</label>
-            <input id="apiKey" type="password" placeholder="Clé Gemini (mode défaut) / Clé Groq (mode Groq)" />
+            <input id="apiKey" type="password" placeholder="Clé Gemini (défaut) / Clé Groq (mode Groq)" />
           </div>
           <div>
             <label>&nbsp;</label>
@@ -60,7 +63,12 @@
         </div>
 
         <div class="inline">
-          <button id="loadModelsBtn" class="secondary" type="button">Charger modèles Gemini</button>
+          <label class="inline"><input type="checkbox" id="rememberKey" /> Mémoriser la clé (localStorage)</label>
+          <button id="forgetKeyBtn" class="secondary" type="button">Oublier</button>
+        </div>
+
+        <div class="inline">
+          <button id="loadModelsBtn" class="secondary" type="button">Charger modèles (selon mode)</button>
           <span id="modelsHint" class="muted"></span>
         </div>
       </div>
@@ -68,7 +76,7 @@
       <div>
         <div id="groqTextBlock" class="hidden">
           <label for="freeText">Texte (optionnel)</label>
-          <textarea id="freeText" placeholder="Colle une transcription, un résumé, ou laisse vide (analyse limitée)."></textarea>
+          <textarea id="freeText" placeholder="Colle une transcription, un résumé, ou n'importe quel texte. Si vide : analyse très limitée."></textarea>
         </div>
 
         <label>Options</label>
@@ -79,15 +87,15 @@
           <label class="inline"><input type="checkbox" id="optCautious" checked /> Mode prudent</label>
         </div>
 
+        <label for="uiLang">Langue de sortie</label>
+        <select id="uiLang">
+          <option value="fr" selected>Français</option>
+          <option value="en">English</option>
+        </select>
+
         <label for="modelChoice">Modèle</label>
         <select id="modelChoice">
-          <optgroup label="Gemini (auto)">
-            <option value="" selected>— Charger la liste via le bouton —</option>
-          </optgroup>
-          <optgroup label="Groq (fixe)">
-            <option value="llama-3.1-70b-versatile">llama-3.1-70b-versatile</option>
-            <option value="mixtral-8x7b-32768">mixtral-8x7b-32768</option>
-          </optgroup>
+          <option value="" selected>— Clique “Charger modèles” —</option>
         </select>
 
         <div class="inline" style="margin-top:10px">
@@ -96,7 +104,8 @@
         </div>
 
         <p class="muted" style="margin-top:10px">
-          En mode Groq, l’URL sert de contexte, mais Groq ne récupère pas automatiquement la transcription.
+          Mode Gemini : 2 étapes (1) extraction/transcript via la vidéo YouTube (2) analyse Authentiometer sur le texte extrait.<br/>
+          Mode Groq : analyse uniquement sur le texte fourni (pas de récupération YouTube).
         </p>
       </div>
     </div>
@@ -109,12 +118,17 @@
     <h2 style="margin-top:0">Résultat</h2>
     <div id="summary"></div>
 
+    <details style="margin-top:10px">
+      <summary>Texte extrait (Gemini)</summary>
+      <pre id="extractedText">(vide)</pre>
+    </details>
+
     <details style="margin-top:10px" open>
       <summary>JSON brut</summary>
       <pre id="rawJson">{}</pre>
     </details>
   </div>
 
-  <script src="./app_authentiometer.js"></script>
+  <script src="./app.js"></script>
 </body>
 </html>
