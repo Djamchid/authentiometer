@@ -1,3 +1,13 @@
+// ===================
+// Authentiometer (no-backend)
+// - Dynamic models: Gemini + Groq
+// - LocalStorage API keys (opt-in)
+// - Gemini: "YouTube URL as video file part" + 2-step pipeline:
+//    1) extract/transcript-like text
+//    2) Authentiometer analysis on extracted text
+// - Groq: analyze free text only
+// ===================
+
 // ---------- UI helpers ----------
 const $ = (id) => document.getElementById(id);
 
@@ -15,14 +25,14 @@ function show(el, yes) {
   el.classList.toggle("hidden", !yes);
 }
 
+function pretty(obj) {
+  return JSON.stringify(obj, null, 2);
+}
+
 function safeJsonParse(s) {
   const t = (s || "").trim();
   if (!t.startsWith("{") || !t.endsWith("}")) throw new Error("Response is not a JSON object");
   return JSON.parse(t);
-}
-
-function pretty(obj) {
-  return JSON.stringify(obj, null, 2);
 }
 
 function buildOptions() {
@@ -34,6 +44,45 @@ function buildOptions() {
   };
 }
 
+function getMode() {
+  return $("mode").value; // gemini | groq
+}
+
+function getLang() {
+  return $("uiLang").value; // fr | en
+}
+
+function getStorageKeyForMode(mode) {
+  return mode === "gemini" ? "authentiometer_gemini_api_key" : "authentiometer_groq_api_key";
+}
+
+function applyRememberCheckboxFromStorage(mode) {
+  const k = getStorageKeyForMode(mode);
+  const has = !!localStorage.getItem(k);
+  // If stored, we pre-fill and mark checkbox on
+  if (has) {
+    $("apiKey").value = localStorage.getItem(k) || "";
+    $("rememberKey").checked = true;
+  } else {
+    $("rememberKey").checked = false;
+  }
+}
+
+function persistKeyIfWanted(mode) {
+  const remember = $("rememberKey").checked;
+  const k = getStorageKeyForMode(mode);
+  if (remember) localStorage.setItem(k, $("apiKey").value.trim());
+  else localStorage.removeItem(k);
+}
+
+function forgetKey(mode) {
+  const k = getStorageKeyForMode(mode);
+  localStorage.removeItem(k);
+  $("rememberKey").checked = false;
+  $("apiKey").value = "";
+}
+
+// ---------- Rendering ----------
 function renderSummary(out) {
   const tp = out?.trustProfile;
   const ru = out?.recommendedUse;
@@ -59,14 +108,20 @@ function renderSummary(out) {
   $("summary").innerHTML = lines.join("\n") || `<div class="muted">Aucun résumé disponible.</div>`;
 }
 
-// ---------- Prompt templates ----------
-function systemRulesText() {
+// ---------- Prompting ----------
+function systemRulesText(lang) {
+  const langLine = lang === "fr"
+    ? "You MUST write all user-facing strings in French."
+    : "You MUST write all user-facing strings in English.";
+
   return `
 You are Authentiometer, an epistemic decision-support tool for viewers analyzing a single YouTube video.
 
+${langLine}
+
 NON-NEGOTIABLE RULES:
 - Output MUST be valid JSON only. No markdown, no comments, no trailing text.
-- Do NOT claim certainty. Avoid "true/fals" verdicts. Use probabilistic language.
+- Do NOT claim certainty. Avoid "true/false" verdicts. Use probabilistic language.
 - If you lack evidence, say "uncertain" and explain why.
 - Do NOT invent sources, quotes, or timestamps.
 - Do NOT browse the web. Use only the information you are given.
@@ -157,9 +212,8 @@ CONSTRAINTS:
   `.trim();
 }
 
-function buildAnalyzePrompt({ mode, options, videoMeta, youtubeUrl, freeText }) {
+function buildAnalyzePrompt({ lang, options, videoMeta, youtubeUrl, transcriptText }) {
   const inputObj = {
-    mode,
     options,
     videoMeta: {
       title: videoMeta.title || "",
@@ -168,17 +222,15 @@ function buildAnalyzePrompt({ mode, options, videoMeta, youtubeUrl, freeText }) 
       publishedAt: videoMeta.publishedAt || "",
       url: youtubeUrl || ""
     },
-    transcriptText: freeText || ""
+    transcriptText: transcriptText || ""
   };
 
-  const contextBlock =
-    mode === "gemini"
-      ? `Analyze the YouTube video at this URL (use its transcript/content as available to you):\n${youtubeUrl}\n`
-      : `YouTube URL context (may help topic):\n${youtubeUrl || "(none)"}\n`;
+  const instruction = lang === "fr"
+    ? "Analyse le contenu ci-dessous selon la charte Authentiometer."
+    : "Analyze the content below following the Authentiometer charter.";
 
   return `
-${contextBlock}
-Analyze the following input. Produce STRICT JSON matching the schema below.
+${instruction}
 
 INPUT:
 ${JSON.stringify(inputObj, null, 2)}
@@ -187,80 +239,141 @@ ${userSchemaText()}
   `.trim();
 }
 
-// ---------- Gemini: ListModels ----------
+// Gemini Step 1: "Extract transcript-like text"
+function geminiExtractSystem(lang) {
+  const langLine = lang === "fr"
+    ? "You MUST write all user-facing strings in French."
+    : "You MUST write all user-facing strings in English.";
+
+  return `
+You are a video-to-text extractor for a YouTube video.
+
+${langLine}
+
+RULES:
+- Output MUST be valid JSON only.
+- Do NOT invent timestamps or quotes. Only output what you can actually extract from the video.
+- If you cannot access the video's content (permissions/region/restrictions), say so.
+- Try to extract a transcript-like text. If full transcript is not possible, extract a dense "content text" capturing the spoken content.
+- Keep transcriptText under 12000 characters. Prefer content density over narration.
+  `.trim();
+}
+
+function geminiExtractUser(lang, youtubeUrl) {
+  const schema = `
+OUTPUT JSON SCHEMA (MUST MATCH KEYS EXACTLY):
+{
+  "access": "ok|partial|blocked",
+  "contentLanguage": "string",
+  "coverage": "full|partial|none",
+  "transcriptText": "string",
+  "keyQuotes": ["string"],
+  "notes": "string",
+  "limitations": ["string"]
+}
+CONSTRAINTS:
+- transcriptText: max 12000 characters.
+- keyQuotes: 0 to 8 items; each quote max 180 chars.
+- No extra keys.
+  `.trim();
+
+  const instruction = lang === "fr"
+    ? `Extrais le contenu parlé/texte de cette vidéo YouTube. Si tu ne peux pas obtenir une transcription complète, fournis un texte dense basé sur le contenu réellement accessible.`
+    : `Extract spoken content/text from this YouTube video. If full transcript is not possible, provide dense content text from what you can access.`;
+
+  return `
+${instruction}
+
+YouTube URL:
+${youtubeUrl}
+
+${schema}
+  `.trim();
+}
+
+// ---------- Models loading ----------
 async function listGeminiModels(apiKey) {
-  // Official "Models" endpoint exists in v1beta. :contentReference[oaicite:2]{index=2}
   const endpoint = "https://generativelanguage.googleapis.com/v1beta/models";
   const resp = await fetch(endpoint, {
     method: "GET",
     headers: { "x-goog-api-key": apiKey }
   });
-
   if (!resp.ok) {
     const t = await resp.text().catch(() => "");
-    throw new Error(`ListModels HTTP ${resp.status}: ${t.slice(0, 400)}`);
+    throw new Error(`Gemini ListModels HTTP ${resp.status}: ${t.slice(0, 400)}`);
   }
-
   const data = await resp.json();
   const models = (data.models || [])
     .filter(m => (m.supportedGenerationMethods || []).includes("generateContent"))
     .map(m => (m.name || "").replace(/^models\//, ""))
     .filter(Boolean);
 
-  // Small preference ordering: flash first, then pro (if present)
+  // Prefer newer flash/pro; you can tweak ranking later
   models.sort((a, b) => {
-    const score = (x) => (x.includes("flash") ? 0 : 10) + (x.includes("pro") ? 1 : 5) + (x.includes("preview") ? 9 : 0);
+    const score = (x) =>
+      (x.includes("flash") ? 0 : 10) +
+      (x.includes("pro") ? 1 : 5) +
+      (x.includes("preview") ? 9 : 0);
     return score(a) - score(b);
   });
 
   return models;
 }
 
-function populateGeminiModels(models) {
-  const select = $("modelChoice");
-
-  // Remove existing Gemini optgroup (label="Gemini (auto)") and recreate it
-  const oldGroups = Array.from(select.querySelectorAll("optgroup"));
-  for (const g of oldGroups) {
-    if ((g.getAttribute("label") || "").startsWith("Gemini")) g.remove();
-  }
-
-  const group = document.createElement("optgroup");
-  group.label = "Gemini (auto)";
-  if (!models.length) {
-    const opt = document.createElement("option");
-    opt.value = "";
-    opt.textContent = "— Aucun modèle Gemini disponible (generateContent) —";
-    group.appendChild(opt);
-  } else {
-    for (const m of models) {
-      const opt = document.createElement("option");
-      opt.value = m;
-      opt.textContent = m;
-      group.appendChild(opt);
+async function listGroqModels(apiKey) {
+  // Groq supports OpenAI-compatible models endpoint
+  const endpoint = "https://api.groq.com/openai/v1/models";
+  const resp = await fetch(endpoint, {
+    method: "GET",
+    headers: {
+      "Authorization": `Bearer ${apiKey}`,
+      "Content-Type": "application/json"
     }
+  });
+  if (!resp.ok) {
+    const t = await resp.text().catch(() => "");
+    throw new Error(`Groq ListModels HTTP ${resp.status}: ${t.slice(0, 400)}`);
+  }
+  const data = await resp.json();
+  const models = (data.data || [])
+    .map(m => m.id)
+    .filter(Boolean);
+
+  // Keep only likely chat-capable models (heuristic)
+  const filtered = models.filter(id =>
+    /llama|mistral|gemma|qwen|guard/i.test(id)
+  );
+
+  filtered.sort((a, b) => a.localeCompare(b));
+  return filtered.length ? filtered : models.sort((a, b) => a.localeCompare(b));
+}
+
+function populateModels(models, { keepValue = true } = {}) {
+  const select = $("modelChoice");
+  const prev = select.value;
+
+  select.innerHTML = "";
+  const placeholder = document.createElement("option");
+  placeholder.value = "";
+  placeholder.textContent = models.length ? "— Choisis un modèle —" : "— Aucun modèle trouvé —";
+  select.appendChild(placeholder);
+
+  for (const m of models) {
+    const opt = document.createElement("option");
+    opt.value = m;
+    opt.textContent = m;
+    select.appendChild(opt);
   }
 
-  // Insert Gemini group at top
-  select.insertBefore(group, select.firstChild);
-
-  // Auto-select first Gemini model if we are in gemini mode
-  if ($("mode").value === "gemini" && models.length) {
-    select.value = models[0];
-  }
+  if (keepValue && prev && models.includes(prev)) select.value = prev;
+  else if (models.length) select.value = models[0];
+  else select.value = "";
 }
 
 // ---------- Providers ----------
-async function callGeminiJsonStrict({ apiKey, model, systemText, userText }) {
-  // Gemini API uses x-goog-api-key header. :contentReference[oaicite:3]{index=3}
+async function callGeminiGenerateContent({ apiKey, model, body }) {
   const endpoint =
     `https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(model)}:generateContent`;
-
-  const body = {
-    systemInstruction: { parts: [{ text: systemText }] },
-    contents: [{ role: "user", parts: [{ text: userText }] }],
-    generationConfig: { temperature: 0.2 }
-  };
 
   const resp = await fetch(endpoint, {
     method: "POST",
@@ -273,11 +386,29 @@ async function callGeminiJsonStrict({ apiKey, model, systemText, userText }) {
 
   if (!resp.ok) {
     const t = await resp.text().catch(() => "");
-    throw new Error(`Gemini HTTP ${resp.status}: ${t.slice(0, 800)}`);
+    throw new Error(`Gemini HTTP ${resp.status}: ${t.slice(0, 900)}`);
   }
+  return await resp.json();
+}
 
-  const data = await resp.json();
-  const text = data?.candidates?.[0]?.content?.parts?.map(p => p.text).join("") ?? "";
+function geminiTextFromResponse(data) {
+  return data?.candidates?.[0]?.content?.parts?.map(p => p.text).join("") ?? "";
+}
+
+async function callGeminiJsonStrict({ apiKey, model, systemText, userText, parts }) {
+  // If parts provided, use them; else use userText as plain text part.
+  const contentsParts = parts?.length
+    ? parts
+    : [{ text: userText }];
+
+  const body = {
+    systemInstruction: { parts: [{ text: systemText }] },
+    contents: [{ role: "user", parts: contentsParts }],
+    generationConfig: { temperature: 0.2 }
+  };
+
+  const data = await callGeminiGenerateContent({ apiKey, model, body });
+  const text = geminiTextFromResponse(data);
   return safeJsonParse(text);
 }
 
@@ -303,7 +434,7 @@ async function callGroqJsonStrict({ apiKey, model, systemText, userText }) {
 
   if (!resp.ok) {
     const t = await resp.text().catch(() => "");
-    throw new Error(`Groq HTTP ${resp.status}: ${t.slice(0, 800)}`);
+    throw new Error(`Groq HTTP ${resp.status}: ${t.slice(0, 900)}`);
   }
 
   const data = await resp.json();
@@ -319,70 +450,150 @@ async function callWithJsonRetry(fn, args) {
     if (!/JSON|not a JSON|Unexpected token|Response is not/i.test(msg)) throw e1;
 
     const hardenedSystem = args.systemText + "\n\nCRITICAL: Output ONLY valid JSON. No extra text. No markdown.";
-    const hardenedUser = args.userText + "\n\nREMINDER: Output MUST be a single JSON object only.";
+    const hardenedUser = (args.userText || "") + "\n\nREMINDER: Output MUST be a single JSON object only.";
 
     return await fn({ ...args, systemText: hardenedSystem, userText: hardenedUser });
   }
 }
 
-// ---------- Mode / model picking ----------
-function pickModelForMode(mode) {
-  const choice = $("modelChoice").value;
-
-  if (mode === "gemini") {
-    if (!choice) throw new Error("Choisis un modèle Gemini (bouton 'Charger modèles Gemini').");
-    return choice;
-  }
-  // groq
-  if (!choice || choice.startsWith("gemini-")) return "llama-3.1-70b-versatile";
-  return choice;
-}
-
+// ---------- Core flows ----------
 function updateModeUI() {
-  const mode = $("mode").value;
+  const mode = getMode();
   show($("groqTextBlock"), mode === "groq");
-  $("loadModelsBtn").disabled = mode !== "gemini";
-  $("modelsHint").textContent = mode === "gemini"
-    ? "Clique 'Charger modèles Gemini' après avoir collé la clé."
-    : "Mode Groq: sélectionne un modèle Groq dans la liste.";
-  $("apiKey").placeholder = mode === "gemini" ? "Clé Gemini (AI Studio)" : "Clé Groq";
+
+  $("modelsHint").textContent =
+    mode === "gemini"
+      ? "Mode Gemini: colle la clé, clique 'Charger modèles', puis choisis un modèle."
+      : "Mode Groq: colle la clé, clique 'Charger modèles', puis choisis un modèle.";
+
+  // Prefill remembered key if present
+  applyRememberCheckboxFromStorage(mode);
 }
 
-$("mode").addEventListener("change", updateModeUI);
+function getSelectedModelOrThrow() {
+  const model = $("modelChoice").value;
+  if (!model) throw new Error("Choisis un modèle (clique d’abord “Charger modèles”).");
+  return model;
+}
+
+function isValidYouTubeUrl(url) {
+  return /^https?:\/\/(www\.)?(youtube\.com|youtu\.be)\//i.test(url || "");
+}
+
+async function geminiExtractTextFromYouTube({ apiKey, model, lang, youtubeUrl }) {
+  // Pass YouTube URL as a video file part (file_data).
+  // This is the “béton” part: do NOT rely on plain text URL.
+  const parts = [
+    { file_data: { mime_type: "video/mp4", file_uri: youtubeUrl } },
+    { text: geminiExtractUser(lang, youtubeUrl) }
+  ];
+
+  const out = await callWithJsonRetry(callGeminiJsonStrict, {
+    apiKey,
+    model,
+    systemText: geminiExtractSystem(lang),
+    userText: "",   // not used because we pass parts
+    parts
+  });
+
+  return out;
+}
+
+async function geminiAnalyzeAuthentiometer({ apiKey, model, lang, options, youtubeUrl, transcriptText }) {
+  const videoMeta = { title: "", description: "", channelTitle: "", publishedAt: "" };
+  const systemText = systemRulesText(lang);
+  const userText = buildAnalyzePrompt({ lang, options, videoMeta, youtubeUrl, transcriptText });
+
+  const out = await callWithJsonRetry(callGeminiJsonStrict, {
+    apiKey,
+    model,
+    systemText,
+    userText
+  });
+
+  return out;
+}
+
+async function groqAnalyzeAuthentiometer({ apiKey, model, lang, options, youtubeUrl, freeText }) {
+  const videoMeta = { title: "", description: "", channelTitle: "", publishedAt: "" };
+  const systemText = systemRulesText(lang);
+
+  const transcriptText = freeText || "";
+  const userText = buildAnalyzePrompt({ lang, options, videoMeta, youtubeUrl, transcriptText });
+
+  const out = await callWithJsonRetry(callGroqJsonStrict, {
+    apiKey,
+    model,
+    systemText,
+    userText
+  });
+
+  return out;
+}
+
+// ---------- Event handlers ----------
+$("mode").addEventListener("change", () => {
+  updateModeUI();
+  // Clear models on mode switch to avoid mismatches
+  populateModels([]);
+  $("extractedText").textContent = "(vide)";
+  $("rawJson").textContent = "{}";
+  $("summary").innerHTML = "";
+  setError("");
+  setStatus("Mode changé. Charge les modèles.");
+});
 
 $("toggleKey").addEventListener("click", () => {
   const input = $("apiKey");
   const btn = $("toggleKey");
-  if (input.type === "password") {
-    input.type = "text";
-    btn.textContent = "🙈 Masquer";
-  } else {
-    input.type = "password";
-    btn.textContent = "👁️ Afficher";
-  }
+  if (input.type === "password") { input.type = "text"; btn.textContent = "🙈 Masquer"; }
+  else { input.type = "password"; btn.textContent = "👁️ Afficher"; }
+});
+
+$("rememberKey").addEventListener("change", () => {
+  persistKeyIfWanted(getMode());
+});
+
+$("apiKey").addEventListener("input", () => {
+  // If remember checked, keep updated
+  if ($("rememberKey").checked) persistKeyIfWanted(getMode());
+});
+
+$("forgetKeyBtn").addEventListener("click", () => {
+  forgetKey(getMode());
+  setStatus("Clé oubliée.");
 });
 
 $("clearBtn").addEventListener("click", () => {
   $("youtubeUrl").value = "";
-  $("apiKey").value = "";
   $("freeText").value = "";
   $("rawJson").textContent = "{}";
   $("summary").innerHTML = "";
+  $("extractedText").textContent = "(vide)";
   setError("");
-  setStatus("");
+  setStatus("Effacé.");
 });
 
 $("loadModelsBtn").addEventListener("click", async () => {
   setError("");
-  setStatus("Chargement des modèles Gemini…");
+  setStatus("Chargement des modèles…");
+
+  const mode = getMode();
+  const apiKey = $("apiKey").value.trim();
+  if (!apiKey) { setStatus(""); setError("Colle d’abord la clé API."); return; }
+
   try {
-    const apiKey = $("apiKey").value.trim();
-    if (!apiKey) throw new Error("Colle d’abord ta clé Gemini.");
+    persistKeyIfWanted(mode);
 
-    const models = await listGeminiModels(apiKey);
-    populateGeminiModels(models);
-
-    setStatus(models.length ? `OK ✅ ${models.length} modèles Gemini chargés.` : "Aucun modèle Gemini compatible trouvé.", models.length ? "ok" : "info");
+    if (mode === "gemini") {
+      const models = await listGeminiModels(apiKey);
+      populateModels(models);
+      setStatus(models.length ? `Gemini ✅ ${models.length} modèles chargés.` : "Gemini: aucun modèle trouvé.", models.length ? "ok" : "info");
+    } else {
+      const models = await listGroqModels(apiKey);
+      populateModels(models);
+      setStatus(models.length ? `Groq ✅ ${models.length} modèles chargés.` : "Groq: aucun modèle trouvé.", models.length ? "ok" : "info");
+    }
   } catch (e) {
     setStatus("");
     setError(String(e?.message || e));
@@ -394,30 +605,85 @@ $("analyzeBtn").addEventListener("click", async () => {
   setStatus("Préparation…");
   $("summary").innerHTML = "";
   $("rawJson").textContent = "{}";
+  $("extractedText").textContent = "(vide)";
 
-  const mode = $("mode").value;
+  const mode = getMode();
+  const lang = getLang();
   const apiKey = $("apiKey").value.trim();
   const youtubeUrl = $("youtubeUrl").value.trim();
-  const freeText = $("freeText").value;
   const options = buildOptions();
+  const freeText = $("freeText").value || "";
 
-  if (!apiKey) { setError("Clé API manquante."); setStatus(""); return; }
-  if (!youtubeUrl && mode === "gemini") { setError("En mode Gemini, l’URL YouTube est requise."); setStatus(""); return; }
+  if (!apiKey) { setStatus(""); setError("Clé API manquante."); return; }
+  persistKeyIfWanted(mode);
 
-  const videoMeta = { title: "", description: "", channelTitle: "", publishedAt: "" };
-  const systemText = systemRulesText();
-  const userText = buildAnalyzePrompt({ mode, options, videoMeta, youtubeUrl, freeText });
+  let model;
+  try { model = getSelectedModelOrThrow(); }
+  catch (e) { setStatus(""); setError(String(e?.message || e)); return; }
 
   try {
-    const model = pickModelForMode(mode);
-    setStatus(`Analyse en cours via ${mode === "gemini" ? "Gemini" : "Groq"} (${model})…`);
+    if (mode === "gemini") {
+      if (!youtubeUrl) throw new Error("En mode Gemini, l’URL YouTube est requise.");
+      if (!isValidYouTubeUrl(youtubeUrl)) throw new Error("URL YouTube invalide (youtube.com / youtu.be).");
 
-    const out = mode === "gemini"
-      ? await callWithJsonRetry(callGeminiJsonStrict, { apiKey, model, systemText, userText })
-      : await callWithJsonRetry(callGroqJsonStrict, { apiKey, model, systemText, userText });
+      setStatus(`Étape 1/2: extraction du texte depuis la vidéo (Gemini: ${model})…`);
 
-    $("rawJson").textContent = pretty(out);
-    renderSummary(out);
+      const extracted = await geminiExtractTextFromYouTube({
+        apiKey,
+        model,
+        lang,
+        youtubeUrl
+      });
+
+      const transcriptText = (extracted?.transcriptText || "").trim();
+      $("extractedText").textContent =
+        transcriptText ? transcriptText : "(aucun texte extrait)";
+
+      // If blocked/none, still attempt analysis but it should be honest about limitations
+      setStatus(`Étape 2/2: analyse Authentiometer (Gemini: ${model})…`);
+
+      const analyzed = await geminiAnalyzeAuthentiometer({
+        apiKey,
+        model,
+        lang,
+        options,
+        youtubeUrl,
+        transcriptText
+      });
+
+      // Merge some extraction limitations into final output (without changing schema: append into limitations if present)
+      try {
+        if (Array.isArray(analyzed.limitations)) {
+          const add = []
+            .concat(extracted?.limitations || [])
+            .concat(extracted?.notes ? [extracted.notes] : [])
+            .filter(Boolean);
+
+          // de-dupe
+          const merged = Array.from(new Set([...analyzed.limitations, ...add]));
+          analyzed.limitations = merged.slice(0, 20);
+        }
+      } catch {}
+
+      $("rawJson").textContent = pretty(analyzed);
+      renderSummary(analyzed);
+      setStatus("Terminé ✅", "ok");
+      return;
+    }
+
+    // Groq mode
+    setStatus(`Analyse Authentiometer (Groq: ${model})…`);
+    const analyzed = await groqAnalyzeAuthentiometer({
+      apiKey,
+      model,
+      lang,
+      options,
+      youtubeUrl: youtubeUrl || "",
+      freeText
+    });
+
+    $("rawJson").textContent = pretty(analyzed);
+    renderSummary(analyzed);
     setStatus("Terminé ✅", "ok");
   } catch (e) {
     setStatus("");
@@ -425,6 +691,7 @@ $("analyzeBtn").addEventListener("click", async () => {
   }
 });
 
-// Init
+// ---------- Init ----------
 updateModeUI();
-setStatus("Prêt. Colle une clé Gemini puis clique 'Charger modèles Gemini'.");
+populateModels([]);
+setStatus("Prêt. Colle ta clé, clique “Charger modèles”, puis analyse.");
