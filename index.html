@@ -4,131 +4,201 @@
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width,initial-scale=1" />
   <title>Authentiometer</title>
-  <style>
-    body { font-family: system-ui, -apple-system, Segoe UI, Roboto, Arial, sans-serif; margin: 24px; max-width: 980px; }
-    h1 { margin: 0 0 8px; }
-    .muted { color: #666; font-size: 0.95rem; }
-    .row { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
-    .card { border: 1px solid #ddd; border-radius: 10px; padding: 14px; margin: 12px 0; }
-    label { display: block; font-weight: 600; margin: 10px 0 6px; }
-    input[type="text"], input[type="password"], textarea, select {
-      width: 100%; padding: 10px; border: 1px solid #ccc; border-radius: 8px; font: inherit;
-      box-sizing: border-box;
-    }
-    textarea { min-height: 140px; resize: vertical; }
-    .inline { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; }
-    .inline > * { margin: 6px 0; }
-    button { padding: 10px 14px; border: 0; border-radius: 8px; cursor: pointer; font-weight: 700; }
-    button.primary { background: #111; color: #fff; }
-    button.secondary { background: #eee; }
-    button:disabled { opacity: 0.5; cursor: not-allowed; }
-    .pill { display: inline-block; padding: 3px 8px; border: 1px solid #ddd; border-radius: 999px; font-size: 0.85rem; }
-    .hidden { display: none; }
-    pre { background: #0b1020; color: #e7e7e7; padding: 12px; border-radius: 10px; overflow: auto; }
-    .error { color: #b00020; font-weight: 700; }
-    .ok { color: #0a7a2f; font-weight: 700; }
-    details summary { cursor: pointer; font-weight: 700; }
-    hr { border: 0; border-top: 1px solid #eee; margin: 12px 0; }
-  </style>
+  <link rel="stylesheet" href="/authentiometer/styles.css" />
 </head>
 <body>
-  <h1>Authentiometer</h1>
-  <p class="muted">
-    Par défaut : <span class="pill">Gemini + YouTube</span> (extraction/transcript auto via “video file part”) • Option :
-    <span class="pill">Groq + texte</span><br/>
-    Aucune donnée n’est stockée côté serveur. Les clés peuvent être mémorisées localement si tu coches “Mémoriser”.
-  </p>
-
-  <div class="card">
-    <div class="row">
+  <header class="topbar">
+    <div class="brand">
+      <div class="logo">A</div>
       <div>
-        <label for="mode">Mode</label>
-        <select id="mode">
-          <option value="gemini" selected>Gemini + URL YouTube (défaut)</option>
-          <option value="groq">Groq + texte (transcription ou non)</option>
-        </select>
-
-        <label for="youtubeUrl">URL YouTube</label>
-        <input id="youtubeUrl" type="text" placeholder="https://www.youtube.com/watch?v=..." />
-
-        <div class="inline">
-          <div style="flex:1">
-            <label for="apiKey">Clé API</label>
-            <input id="apiKey" type="password" placeholder="Clé Gemini (défaut) / Clé Groq (mode Groq)" />
-          </div>
-          <div>
-            <label>&nbsp;</label>
-            <button id="toggleKey" class="secondary" type="button">👁️ Afficher</button>
-          </div>
-        </div>
-
-        <div class="inline">
-          <label class="inline"><input type="checkbox" id="rememberKey" /> Mémoriser la clé (localStorage)</label>
-          <button id="forgetKeyBtn" class="secondary" type="button">Oublier</button>
-        </div>
-
-        <div class="inline">
-          <button id="loadModelsBtn" class="secondary" type="button">Charger modèles (selon mode)</button>
-          <span id="modelsHint" class="muted"></span>
-        </div>
-      </div>
-
-      <div>
-        <div id="groqTextBlock" class="hidden">
-          <label for="freeText">Texte (optionnel)</label>
-          <textarea id="freeText" placeholder="Colle une transcription, un résumé, ou n'importe quel texte. Si vide : analyse très limitée."></textarea>
-        </div>
-
-        <label>Options</label>
-        <div class="inline">
-          <label class="inline"><input type="checkbox" id="optAuth" checked /> Authenticity</label>
-          <label class="inline"><input type="checkbox" id="optFact" checked /> Fact-checking</label>
-          <label class="inline"><input type="checkbox" id="optSci" checked /> Scientific soundness</label>
-          <label class="inline"><input type="checkbox" id="optCautious" checked /> Mode prudent</label>
-        </div>
-
-        <label for="uiLang">Langue de sortie</label>
-        <select id="uiLang">
-          <option value="fr" selected>Français</option>
-          <option value="en">English</option>
-        </select>
-
-        <label for="modelChoice">Modèle</label>
-        <select id="modelChoice">
-          <option value="" selected>— Clique “Charger modèles” —</option>
-        </select>
-
-        <div class="inline" style="margin-top:10px">
-          <button id="analyzeBtn" class="primary" type="button">Analyser</button>
-          <button id="clearBtn" class="secondary" type="button">Effacer</button>
-        </div>
-
-        <p class="muted" style="margin-top:10px">
-          Mode Gemini : 2 étapes (1) extraction/transcript via la vidéo YouTube (2) analyse Authentiometer sur le texte extrait.<br/>
-          Mode Groq : analyse uniquement sur le texte fourni (pas de récupération YouTube).
-        </p>
+        <div class="brand-title">Authentiometer</div>
+        <div class="brand-sub">Aide à la décision de confiance pour contenus YouTube</div>
       </div>
     </div>
+    <div class="topbar-actions">
+      <button id="helpBtn" class="btn secondary" type="button">Aide</button>
+    </div>
+  </header>
 
-    <div id="status" class="muted" style="margin-top:10px"></div>
-    <div id="err" class="error" style="margin-top:10px"></div>
-  </div>
+  <main class="container">
+    <!-- Intro / Home explanations (shown until user checks "do not show") -->
+    <section id="introCard" class="card">
+      <h2>Bienvenue</h2>
+      <p class="muted">
+        Authentiometer t’aide à décider <b>quand</b> et <b>pourquoi</b> accorder ta confiance à une vidéo.
+        Il ne donne pas un verdict “vrai/faux” : il propose un <b>profil</b> (authenticité, plausibilité factuelle, solidité scientifique),
+        avec incertitudes et limites.
+      </p>
 
-  <div class="card">
-    <h2 style="margin-top:0">Résultat</h2>
-    <div id="summary"></div>
+      <div class="grid2">
+        <div class="pillcard">
+          <h3>Mode Gemini + YouTube</h3>
+          <p class="muted">
+            Gemini tente d’extraire le contenu depuis l’URL YouTube, puis l’analyse.
+            Si la vidéo est trop longue / inaccessible, l’outil bascule sur un mode prudent (résumé → analyse) ou s’arrête proprement.
+          </p>
+        </div>
+        <div class="pillcard">
+          <h3>Mode Groq + Texte</h3>
+          <p class="muted">
+            Groq analyse uniquement le texte fourni (transcription, résumé, notes).
+            Si c’est trop long, l’outil condense automatiquement puis analyse.
+          </p>
+        </div>
+      </div>
 
-    <details style="margin-top:10px">
-      <summary>Texte extrait (Gemini)</summary>
-      <pre id="extractedText">(vide)</pre>
-    </details>
+      <div class="row">
+        <label class="checkbox">
+          <input type="checkbox" id="hideIntroChk" />
+          Ne plus afficher ces explications
+        </label>
+      </div>
+    </section>
 
-    <details style="margin-top:10px" open>
-      <summary>JSON brut</summary>
-      <pre id="rawJson">{}</pre>
-    </details>
-  </div>
+    <section class="card">
+      <div class="grid2">
+        <div>
+          <label for="mode">Mode</label>
+          <select id="mode">
+            <option value="gemini" selected>Gemini + URL YouTube (défaut)</option>
+            <option value="groq">Groq + Texte</option>
+          </select>
 
-  <script src="./app_authentiometer.js"></script>
+          <label for="youtubeUrl">URL YouTube</label>
+          <input id="youtubeUrl" type="text" placeholder="https://www.youtube.com/watch?v=..." />
+
+          <div class="row">
+            <label class="checkbox">
+              <input type="checkbox" id="optCautious" checked />
+              Mode prudent (recommandé)
+            </label>
+          </div>
+
+          <label for="uiLang">Langue de sortie</label>
+          <select id="uiLang">
+            <option value="fr" selected>Français</option>
+            <option value="en">English</option>
+          </select>
+        </div>
+
+        <div>
+          <h3 style="margin-top:0">Clés API</h3>
+
+          <label for="geminiKey">Clé Gemini</label>
+          <div class="keyline">
+            <input id="geminiKey" type="password" placeholder="AIza..." />
+            <button id="toggleGeminiKey" class="btn secondary" type="button">👁️</button>
+          </div>
+          <div class="row">
+            <label class="checkbox">
+              <input type="checkbox" id="rememberGemini" />
+              Mémoriser (localStorage)
+            </label>
+            <button id="forgetGemini" class="btn secondary" type="button">Oublier</button>
+          </div>
+
+          <label for="groqKey">Clé Groq</label>
+          <div class="keyline">
+            <input id="groqKey" type="password" placeholder="gsk_..." />
+            <button id="toggleGroqKey" class="btn secondary" type="button">👁️</button>
+          </div>
+          <div class="row">
+            <label class="checkbox">
+              <input type="checkbox" id="rememberGroq" />
+              Mémoriser (localStorage)
+            </label>
+            <button id="forgetGroq" class="btn secondary" type="button">Oublier</button>
+          </div>
+
+          <hr/>
+
+          <label>Indices</label>
+          <div class="row wrap">
+            <label class="checkbox"><input type="checkbox" id="optAuth" checked /> Authenticity</label>
+            <label class="checkbox"><input type="checkbox" id="optFact" checked /> Fact-checking</label>
+            <label class="checkbox"><input type="checkbox" id="optSci" checked /> Scientific soundness</label>
+          </div>
+        </div>
+      </div>
+
+      <hr/>
+
+      <div class="grid2">
+        <div>
+          <label for="modelsGemini">Modèle Gemini</label>
+          <div class="row">
+            <select id="modelsGemini">
+              <option value="" selected>— Charger la liste —</option>
+            </select>
+            <button id="loadGeminiModels" class="btn secondary" type="button">Charger</button>
+          </div>
+
+          <label for="modelsGroq">Modèle Groq</label>
+          <div class="row">
+            <select id="modelsGroq">
+              <option value="" selected>— Charger la liste —</option>
+            </select>
+            <button id="loadGroqModels" class="btn secondary" type="button">Charger</button>
+          </div>
+
+          <p id="modelsHint" class="muted"></p>
+        </div>
+
+        <div id="groqTextBlock" class="hidden">
+          <label for="freeText">Texte (Groq) — transcription, résumé, notes…</label>
+          <textarea id="freeText" placeholder="Colle un texte ici (sinon l'analyse Groq sera limitée)."></textarea>
+          <p class="muted">Astuce : un bon résumé vaut souvent mieux qu’une transcription brute énorme.</p>
+        </div>
+      </div>
+
+      <div class="row">
+        <button id="analyzeBtn" class="btn primary" type="button">Analyser</button>
+        <button id="clearBtn" class="btn secondary" type="button">Effacer</button>
+      </div>
+
+      <div id="status" class="muted"></div>
+      <div id="err" class="error"></div>
+    </section>
+
+    <section class="card">
+      <h2>Résultats</h2>
+
+      <div id="summary"></div>
+
+      <details>
+        <summary>Texte utilisé (après extraction/condensation)</summary>
+        <pre id="usedText">(vide)</pre>
+      </details>
+
+      <details open>
+        <summary>JSON brut</summary>
+        <pre id="rawJson">{}</pre>
+      </details>
+    </section>
+  </main>
+
+  <!-- Help modal -->
+  <dialog id="helpDialog" class="modal">
+    <div class="modal-inner">
+      <div class="modal-head">
+        <h3>Aide</h3>
+        <button id="closeHelp" class="btn secondary" type="button">Fermer</button>
+      </div>
+      <div class="modal-body">
+        <p>
+          <b>Authentiometer</b> fournit un profil de confiance (pas un verdict). Les trois axes sont indépendants :
+          <b>Authenticity</b>, <b>Fact-checking</b>, <b>Scientific soundness</b>.
+        </p>
+        <ul>
+          <li><b>Gemini + YouTube</b> : extraction/texte depuis la vidéo puis analyse. Certaines vidéos peuvent être inaccessibles.</li>
+          <li><b>Groq + Texte</b> : analyse uniquement sur le texte fourni.</li>
+          <li>Si le contenu est trop long : l’outil <b>condense</b> automatiquement, sinon il s’arrête proprement avec une raison claire.</li>
+          <li>Les clés peuvent être mémorisées en localStorage (optionnel).</li>
+        </ul>
+      </div>
+    </div>
+  </dialog>
+
+  <script type="module" src="/authentiometer/app_authentiometer.js"></script>
 </body>
 </html>
