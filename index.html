@@ -18,9 +18,7 @@
     textarea { min-height: 140px; resize: vertical; }
     .inline { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; }
     .inline > * { margin: 6px 0; }
-    button {
-      padding: 10px 14px; border: 0; border-radius: 8px; cursor: pointer; font-weight: 700;
-    }
+    button { padding: 10px 14px; border: 0; border-radius: 8px; cursor: pointer; font-weight: 700; }
     button.primary { background: #111; color: #fff; }
     button.secondary { background: #eee; }
     .pill { display: inline-block; padding: 3px 8px; border: 1px solid #ddd; border-radius: 999px; font-size: 0.85rem; }
@@ -34,8 +32,8 @@
 <body>
   <h1>Authentiometer — MVP</h1>
   <p class="muted">
-    Mode par défaut : <span class="pill">Gemini + URL YouTube</span> • Option : <span class="pill">Groq + texte</span><br/>
-    Aucune donnée n’est stockée. Les clés API restent dans ton navigateur (attention : usage client-side).
+    Par défaut : <span class="pill">Gemini + URL YouTube</span> • Option : <span class="pill">Groq + texte</span><br/>
+    Les clés API restent dans ton navigateur.
   </p>
 
   <div class="card">
@@ -43,7 +41,7 @@
       <div>
         <label for="mode">Mode</label>
         <select id="mode">
-          <option value="gemini">Gemini + URL YouTube (recommandé)</option>
+          <option value="gemini" selected>Gemini + URL YouTube (défaut)</option>
           <option value="groq">Groq + texte (transcription ou non)</option>
         </select>
 
@@ -53,19 +51,24 @@
         <div class="inline">
           <div style="flex:1">
             <label for="apiKey">Clé API</label>
-            <input id="apiKey" type="password" placeholder="Colle ta clé Gemini (par défaut) ou Groq (si mode Groq)" />
+            <input id="apiKey" type="password" placeholder="Clé Gemini (mode défaut) / Clé Groq (mode Groq)" />
           </div>
           <div>
             <label>&nbsp;</label>
             <button id="toggleKey" class="secondary" type="button">👁️ Afficher</button>
           </div>
         </div>
+
+        <div class="inline">
+          <button id="loadModelsBtn" class="secondary" type="button">Charger modèles Gemini</button>
+          <span id="modelsHint" class="muted"></span>
+        </div>
       </div>
 
       <div>
         <div id="groqTextBlock" class="hidden">
           <label for="freeText">Texte (optionnel)</label>
-          <textarea id="freeText" placeholder="Colle une transcription, un résumé, ou laisse vide si tu veux une analyse 'à partir de presque rien' (limitée)."></textarea>
+          <textarea id="freeText" placeholder="Colle une transcription, un résumé, ou laisse vide (analyse limitée)."></textarea>
         </div>
 
         <label>Options</label>
@@ -78,10 +81,13 @@
 
         <label for="modelChoice">Modèle</label>
         <select id="modelChoice">
-          <option value="gemini-1.5-pro">Gemini: gemini-1.5-pro</option>
-          <option value="gemini-1.5-flash">Gemini: gemini-1.5-flash</option>
-          <option value="llama-3.1-70b-versatile">Groq: llama-3.1-70b-versatile</option>
-          <option value="mixtral-8x7b-32768">Groq: mixtral-8x7b-32768</option>
+          <optgroup label="Gemini (auto)">
+            <option value="" selected>— Charger la liste via le bouton —</option>
+          </optgroup>
+          <optgroup label="Groq (fixe)">
+            <option value="llama-3.1-70b-versatile">llama-3.1-70b-versatile</option>
+            <option value="mixtral-8x7b-32768">mixtral-8x7b-32768</option>
+          </optgroup>
         </select>
 
         <div class="inline" style="margin-top:10px">
@@ -90,8 +96,7 @@
         </div>
 
         <p class="muted" style="margin-top:10px">
-          Astuce : en mode Groq, l’URL YouTube est utilisée uniquement comme contexte (titre/description),
-          mais Groq ne “récupère” pas la transcription tout seul.
+          En mode Groq, l’URL sert de contexte, mais Groq ne récupère pas automatiquement la transcription.
         </p>
       </div>
     </div>
@@ -110,6 +115,6 @@
     </details>
   </div>
 
-  <script src="./app_authentiometer.js"></script>
+  <script src="./app.js"></script>
 </body>
 </html>
